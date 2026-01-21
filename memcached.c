@@ -14288,6 +14288,7 @@ bool conn_swallow(conn *c)
 bool conn_nread(conn *c)
 {
     ssize_t res;
+    //printf("conn_nread, c->rlbytes=%d, c->rbytes=%d\n", c->rlbytes, c->rbytes);
 
     if (c->rlbytes == 0) {
         complete_nread(c);

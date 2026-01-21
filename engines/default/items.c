@@ -1547,6 +1547,8 @@ static enum dump_mode do_item_dump_mode_check(const char *modestr)
 
     if (memcmp(modestr, "key", 3) == 0) {
         mode = DUMP_MODE_KEY;
+    } else if (memcmp(modestr, "snapshot", 8) == 0) {
+        mode = DUMP_MODE_SNAPSHOT;
     }
     return mode;
 }
