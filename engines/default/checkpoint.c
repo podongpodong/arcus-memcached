@@ -323,9 +323,6 @@ static void* chkpt_thread_main(void* arg)
 
         /* check previous checkpoint is completed. */
         if (cs->prevtime != -1) {
-            if(!config->async_logging)
-                cmdlog_file_sync();
-
             if (cmdlog_file_dual_write_finished()) {
                 /* remove previous checkpoint files. */
                 if (do_chkpt_remove_files(cs, cs->prevtime) < 0) {
