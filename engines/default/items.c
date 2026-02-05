@@ -1595,17 +1595,13 @@ ENGINE_ERROR_CODE item_dump_start(struct default_engine *engine,
 #ifdef ENABLE_PERSISTENCE
         if (mode == DUMP_MODE_SNAPSHOT) {
             dumper->running = true;
-            chkpt_thread_wakeup();
-            dumper->running = false;
-            break;
-            /*
             ret = chkpt_snapshot_start(CHKPT_SNAPSHOT_MODE_DATA, prefix, nprefix,
                                        filepath, item_dumper_done);
             if (ret != ENGINE_SUCCESS) {
                 dumper->running = false;
             }
+            dumper->running = false;
             break;
-            */
         }
 #endif
 

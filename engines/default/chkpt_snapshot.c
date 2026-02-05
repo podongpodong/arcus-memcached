@@ -459,9 +459,8 @@ static ENGINE_ERROR_CODE do_snapshot_direct(snapshot_st *ss,
 static void *do_snapshot_thread_main(void *arg)
 {
     snapshot_st *ss = (snapshot_st *)arg;
-    assert(ss->running == true);
 
-    if (do_snapshot_action(ss) == true) {
+    if (do_chkpt_snapshot() == 0) {
         logger->log(EXTENSION_LOG_INFO, NULL,
                     "The snapshot thread has done the snapshot action.\n");
     } else {
@@ -497,7 +496,7 @@ static ENGINE_ERROR_CODE do_snapshot_start(snapshot_st *ss,
     do_snapshot_prepare(ss, mode, prefix, nprefix, filepath, callback);
 
     /* start the snapshot thread */
-    ss->running = true;
+    //ss->running = true;
 
     if (pthread_attr_init(&attr) != 0 ||
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) != 0 ||
