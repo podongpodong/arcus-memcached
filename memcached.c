@@ -10033,11 +10033,6 @@ static void process_dump_command(conn *c, token_t *tokens, const size_t ntokens)
             }
             filepath = tokens[4].value;
         }
-        if (nprefix == 6 && strncmp(prefix, "<null>", 6) == 0) {
-            /* dump null prefix */
-            prefix = NULL;
-            nprefix = 0;
-        }
     }
     else if (memcmp(subcommand, "stop", 4) == 0) {
         CHECK_NTOKENS_EQ(ntokens, 3);
