@@ -29,6 +29,7 @@
 #include "cmdlogfile.h"
 
 #define CHKPT_FILE_NAME_FORMAT     "%s/%s%"PRId64
+#define CMDLOG_FILE_NAME_FORMAT    "%s/%s%"PRId64"_%06d"
 #define CHKPT_SNAPSHOT_PREFIX      "snapshot_"
 #define CHKPT_CMDLOG_PREFIX        "cmdlog_"
 
@@ -158,6 +159,25 @@ static int do_chkpt_create_files(chkpt_st *cs, int64_t newtime)
     }
     close(fd);
 
+    sprintf(cs->cmdlog_path, CMDLOG_FILE_NAME_FORMAT,
+            cs->logs_path, CHKPT_CMDLOG_PREFIX, newtime, 1);
+    fd = open(cs->cmdlog_path, O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP);
+    if (fd < 0) {
+        logger->log(EXTENSION_LOG_WARNING, NULL,
+                    "Failed to create cmdlog file. path: %s, error: %s\n",
+                    cs->cmdlog_path, strerror(errno));
+
+        /* remove the snapshot file created here */
+        if (unlink(cs->snapshot_path) < 0 && errno != ENOENT) {
+            logger->log(EXTENSION_LOG_WARNING, NULL,
+                        "Failed to remove the created file. path: %s, error: %s\n",
+                        cs->snapshot_path, strerror(errno));
+            return CHKPT_ERROR_FILE_REMOVE;
+        }
+        return CHKPT_ERROR;
+    }
+    close(fd);
+
     return 0;
 }
 
@@ -233,7 +253,7 @@ static int do_checkpoint(chkpt_st *cs)
         return ret; /* CHKPT_ERROR or CHKPT_ERROR_FILE_REMOVE */
     }
 
-    if ((ret = cmdlog_file_open(cs->cmdlog_path, 1)) != 0) {
+    if ((ret = cmdlog_file_open(cs->cmdlog_path)) != 0) {
         ret = CHKPT_ERROR;
     } else {
         if (chkpt_snapshot_direct(CHKPT_SNAPSHOT_MODE_CHKPT, NULL, -1,
@@ -242,6 +262,7 @@ static int do_checkpoint(chkpt_st *cs)
             ret = CHKPT_SUCCESS;
             cs->prevtime = cs->lasttime;
             cs->lasttime = newtime;
+            printf("prevtime=%ld lasttime=%ld\n", cs->prevtime, newtime);
 
             logger->log(EXTENSION_LOG_INFO, NULL, "Checkpoint has been done.\n");
             /* We will remove the previous checkpoint files
@@ -296,8 +317,6 @@ static void* chkpt_thread_main(void* arg)
     size_t flsweep_time = 0; /* unit : second */
     bool need_remove = false;
     int ret = CHKPT_SUCCESS;
-
-    struct engine_config *config = cs->config;
 
     cs->running = RUNNING_STARTED;
     while (1) {
@@ -424,18 +443,18 @@ int chkpt_recovery_redo(void)
         if (chkpt_snapshot_file_apply(cs->snapshot_path) < 0) {
             return -1;
         }
-        sprintf(cs->cmdlog_path, CHKPT_FILE_NAME_FORMAT,
-                cs->logs_path, CHKPT_CMDLOG_PREFIX, cs->lasttime);
+        sprintf(cs->cmdlog_path, CMDLOG_FILE_NAME_FORMAT,
+                cs->logs_path, CHKPT_CMDLOG_PREFIX, cs->lasttime, 1);
 
-        if (cmdlog_file_open(cs->cmdlog_path, 0) < 0) {
+        if (cmdlog_file_open(cs->cmdlog_path) < 0) {
             return -1;
         }
         /* apply cmd log records if they exist. */
         if (cmdlog_file_apply() < 0) {
             return -1;
         }
-         end = time(NULL);
-         chkpt_last_stat.recovery_elapsed_time_sec = end - start;
+        end = time(NULL);
+        chkpt_last_stat.recovery_elapsed_time_sec = end - start;
     } else {
         /* create empty checkpoint snapshot and create/open cmdlog file. */
         logger->log(EXTENSION_LOG_INFO, NULL,

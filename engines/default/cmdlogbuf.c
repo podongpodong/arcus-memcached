@@ -246,7 +246,6 @@ static LogSN do_log_buff_write(LogRec *logrec, bool dual_write)
 
     /* update nxt_write_lsn */
 
-    //log_buff_gl.nxt_write_lsn.roffset = cmdlog_get_initial_size();
     current_lsn = log_buff_gl.nxt_write_lsn;
     if (log_buff_gl.nxt_write_lsn.roffset+total_length > MAX_FILE_SIZE) {
         log_buff_gl.nxt_write_lsn.filenum += 1;
