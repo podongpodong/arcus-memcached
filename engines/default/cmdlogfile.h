@@ -27,8 +27,7 @@ uint32_t cmdlog_get_dual_size(void);
 uint32_t cmdlog_get_initial_size(void);
 
 /* external log file functions */
-uint32_t cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write,
-                            int *rolled);
+void cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write);
 void cmdlog_file_complete_dual_write(void);
 bool cmdlog_file_dual_write_finished(void);
 int  cmdlog_file_sync(void);

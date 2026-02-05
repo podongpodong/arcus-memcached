@@ -232,8 +232,7 @@ static size_t cmdlog_file_fit(log_FILE *logfile, char **log_ptr, uint32_t log_si
     return log_size;
 }
 
-uint32_t cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write,
-                            int *rolled)
+void cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write)
 {
     log_FILE *logfile = &log_file_gl.log_file;
     ssize_t nwrite;
@@ -254,7 +253,6 @@ uint32_t cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write,
         pthread_mutex_lock(&log_file_gl.file_access_lock);
         log_file_gl.fidx_end+=1;
         create_new_cmdlog(&logfile, log_file_gl.fidx_end);
-        *rolled += 1;
     }
 
     /* The log data is appended */
@@ -281,7 +279,6 @@ uint32_t cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write,
 
             log_file_gl.fidx_dw_end += 1;
             create_new_cmdlog(&logfile, log_file_gl.fidx_dw_end);
-            *rolled += 1;
         }
 
         /* The log data is appended */
@@ -297,8 +294,6 @@ uint32_t cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write,
         logfile->next_size += dual_log_size;
     }
     pthread_mutex_unlock(&log_file_gl.file_access_lock);
-
-    return log_size;
 }
 
 // static void clear_oldfile(logfile_Node **head, logfile_Node **tail)
