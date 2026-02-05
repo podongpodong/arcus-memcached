@@ -102,9 +102,17 @@ uint32_t cmdlog_get_initial_size()
 
 static int create_new_cmdlog(log_FILE **logfile, int next_fidx) {
     int fd;
-    int64_t newtime = getnowdatetime_int();
+    char newtime[15];
 
-    snprintf((*logfile)->path, MAX_FILEPATH_LENGTH,"%s/%s%"PRId64"_%06d",
+    const char *logfile_path = (*logfile)->path;
+    const char *slash = strrchr(logfile_path, '/');
+    const char *base  = (slash ? slash + 1 : logfile_path);
+    const char *time = base + 7;
+
+    memcpy(newtime, time, 14);
+    newtime[14] = '\0';
+
+    snprintf((*logfile)->path, MAX_FILEPATH_LENGTH,"%s/%s%s_%06d",
             config->logs_path, "cmdlog_", newtime, next_fidx);
 
     if ((fd = open((*logfile)->path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP))<0) {
@@ -209,6 +217,7 @@ static size_t cmdlog_file_fit(log_FILE *logfile, char **log_ptr, uint32_t log_si
         LogHdr *loghdr = &logrec->header;
         size_t log_len = sizeof(LogHdr)+loghdr->body_length;
 
+        printf("cmdlog_file_fit=%ld\n", log_len);
         if (logfile->size+bytes_to_write+log_len > MAX_FILE_SIZE)
             break;
 
@@ -253,6 +262,7 @@ void cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write)
         pthread_mutex_lock(&log_file_gl.file_access_lock);
         log_file_gl.fidx_end+=1;
         create_new_cmdlog(&logfile, log_file_gl.fidx_end);
+        printf("idx=%d~%d\n", log_file_gl.fidx_bgn, log_file_gl.fidx_end);
     }
 
     /* The log data is appended */
@@ -273,7 +283,8 @@ void cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write)
         while (logfile->next_size+dual_log_size > MAX_FILE_SIZE) {
             dual_log_size = cmdlog_file_fit(logfile, &dual_log_ptr, dual_log_size);
             pthread_mutex_unlock(&log_file_gl.file_access_lock);
-            disk_fsync(logfile->next_fd);
+            if (!config->async_logging)
+                disk_fsync(logfile->next_fd);
             disk_close(logfile->next_fd);
             pthread_mutex_lock(&log_file_gl.file_access_lock);
 
@@ -312,6 +323,11 @@ void cmdlog_file_complete_dual_write(void)
         logfile->size      = logfile->next_size;
         logfile->next_fd   = -1;
         logfile->next_size = 0;
+
+        log_file_gl.fidx_bgn = log_file_gl.fidx_dw_bgn;
+        log_file_gl.fidx_end = log_file_gl.fidx_dw_end;
+        log_file_gl.fidx_dw_bgn = -1;
+        log_file_gl.fidx_dw_end = -1;
 
         if (config->async_logging) {
             (void)disk_close(logfile->prev_fd);
@@ -632,6 +648,7 @@ int cmdlog_file_apply(void)
             if(!next_cmdlog_exist(&logfile))
                 break;
 
+            log_file_gl.fidx_end += 1;
             fstat(logfile->fd, &file_stat);
             seek_offset = 0;
             logfile->size = file_stat.st_size;

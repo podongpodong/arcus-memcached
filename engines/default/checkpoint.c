@@ -181,7 +181,12 @@ static int do_chkpt_create_files(chkpt_st *cs, int64_t newtime)
     return 0;
 }
 
-/* remove files : snapshot_(oldtime), cmdlog_(oldtime) */
+static int cmdlogfilter(const struct dirent *ent)
+{
+    return (strncmp(ent->d_name, "cmdlog_", strlen("cmdlog_")) == 0);
+}
+
+/* remove files : snapshot_(oldtime), cmdlog_(oldtime)_(number) */
 static int do_chkpt_remove_files(chkpt_st *cs, int64_t oldtime)
 {
     sprintf(cs->snapshot_path, CHKPT_FILE_NAME_FORMAT,
@@ -193,14 +198,34 @@ static int do_chkpt_remove_files(chkpt_st *cs, int64_t oldtime)
         return -1;
     }
 
-    sprintf(cs->cmdlog_path, CHKPT_FILE_NAME_FORMAT,
-            cs->logs_path, CHKPT_CMDLOG_PREFIX, oldtime);
-    if (unlink(cs->cmdlog_path) < 0 && errno != ENOENT) {
-        logger->log(EXTENSION_LOG_WARNING, NULL,
-                    "Failed to remove cmdlog file. path: %s, error: %s\n",
-                    cs->cmdlog_path, strerror(errno));
-        return -1;
+    char target_file[MAX_FILEPATH_LENGTH];
+    sprintf(target_file, "%s%"PRId64, CHKPT_CMDLOG_PREFIX, oldtime);
+    printf("%s\n", target_file);
+    struct dirent **cmdlog_list;
+    int cmdlog_count = scandir(cs->logs_path, &cmdlog_list, cmdlogfilter, alphasort);
+
+    struct dirent *ent;
+    int firstidx = 0;
+    while (firstidx < cmdlog_count) {
+        ent = cmdlog_list[firstidx];
+        // cmdlog_ (7), <time> 14
+        printf("%s\n", ent->d_name);
+        if (strncmp(target_file, ent->d_name, 21) != 0)
+            break;
+
+        char path[MAX_FILEPATH_LENGTH];
+        snprintf(path, MAX_FILEPATH_LENGTH, "%s/%s", cs->logs_path, ent->d_name);
+        if (unlink(path) < 0 && errno != ENOENT) {
+            logger->log(EXTENSION_LOG_WARNING, NULL,
+                        "Failed to remove cmdlog file. path: %s, error: %s\n",
+                        path, strerror(errno));
+            return -1;
+        }
+        firstidx++;
     }
+
+
+
     return 0;
 }
 

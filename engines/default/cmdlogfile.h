@@ -22,7 +22,7 @@
 
 #ifdef ENABLE_PERSISTENCE
 
-#define MAX_FILE_SIZE 90//(4 * 1024) //1024*1024*1024 // 1GB /* unit : byte */
+#define MAX_FILE_SIZE (2 * 1024) //1024*1024*1024 // 1GB /* unit : byte */
 uint32_t cmdlog_get_dual_size(void);
 uint32_t cmdlog_get_initial_size(void);
 
