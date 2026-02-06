@@ -10019,7 +10019,7 @@ static void process_dump_command(conn *c, token_t *tokens, const size_t ntokens)
             filepath = tokens[3].value;
         } else if (ntokens == 4 && (strncmp(tokens[2].value, "snapshot", 8) == 0)) {
             filepath = NULL;
-        } else {
+        } else if (ntokens == 6) {
             prefix = tokens[3].value;
             nprefix = tokens[3].length;
             if (nprefix > PREFIX_MAX_LENGTH) {
