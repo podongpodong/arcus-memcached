@@ -34,6 +34,7 @@
 /* log file structure */
 typedef struct _log_file {
     char      path[MAX_FILEPATH_LENGTH];
+    char      next_path[MAX_FILEPATH_LENGTH];
     int       prev_fd;
     int       fd;
     int       next_fd;
@@ -55,73 +56,60 @@ struct log_file_global {
     volatile bool   initialized;
 };
 
-typedef struct _logfile_node {
-    log_FILE file;
-    struct _logfile_node *next_file;
-} logfile_Node;
-
-/* log file queue global structure */
-struct logfile_queue {
-    logfile_Node *head;       /* cmdlog queue head */
-    logfile_Node *tail;       /* cmdlog queue tail*/
-    logfile_Node *dw_head;    /* dual-write head */
-    logfile_Node *dw_tail;    /* dual-write head */
-    logfile_Node *prev;        /* current write position*/
-
-    /* file_count, max_file_size*/
-    int file_node_count;
-    int max_file_size;
-};
-
 /* global data */
 static struct engine_config *config = NULL;
 static EXTENSION_LOGGER_DESCRIPTOR *logger = NULL;
 static struct log_file_global log_file_gl;
 
-/*
-* Static Function for file circular queue
-*/
+// bool cmdlog_file_deletable() {
+//     bool ret;
+//     pthread_mutex_lock(&log_file_gl.file_access_lock);
+//     ret = (log_file_gl.fidx_bgn < log_file_gl.fidx_end);
+//     pthread_mutex_unlock(&log_file_gl.file_access_lock);
+//     return ret;
+// }
 
-uint32_t cmdlog_get_dual_size()
-{
-    size_t fsize;
-    pthread_mutex_lock(&log_file_gl.file_access_lock);
-    fsize = log_file_gl.log_file.next_size;
-    pthread_mutex_unlock(&log_file_gl.file_access_lock);
-    return fsize;
-}
+// void cmdlog_file_delete(const char* path) {
 
-uint32_t cmdlog_get_initial_size()
-{
-    size_t fsize;
-    pthread_mutex_lock(&log_file_gl.file_access_lock);
-    fsize = log_file_gl.log_file.size;
-    pthread_mutex_unlock(&log_file_gl.file_access_lock);
-    return fsize;
-}
+//     if (unlink(path) < 0) {
 
-static int create_new_cmdlog(log_FILE **logfile, int next_fidx) {
+//     }
+
+//     pthread_mutex_lock(&log_file_gl.file_access_lock);
+//     log_file_gl.fidx_bgn += 1;
+//     pthread_mutex_unlock(&log_file_gl.file_access_lock);
+// }
+
+static int create_new_cmdlog(log_FILE **logfile, int next_fidx, bool dual_write) {
     int fd;
     char newtime[15];
 
-    const char *logfile_path = (*logfile)->path;
+    const char *logfile_path = (dual_write ? (*logfile)->next_path : (*logfile)->path);
     const char *slash = strrchr(logfile_path, '/');
     const char *base  = (slash ? slash + 1 : logfile_path);
     const char *time = base + 7;
+    char newpath[MAX_FILEPATH_LENGTH];
 
     memcpy(newtime, time, 14);
     newtime[14] = '\0';
 
-    snprintf((*logfile)->path, MAX_FILEPATH_LENGTH,"%s/%s%s_%06d",
+    snprintf(newpath, MAX_FILEPATH_LENGTH,"%s/%s%s_%06d",
             config->logs_path, "cmdlog_", newtime, next_fidx);
 
-    if ((fd = open((*logfile)->path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP))<0) {
-        logger->log(EXTENSION_LOG_WARNING, "Fail to open file : %s\n", (*logfile)->path);
+    if ((fd = open(newpath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP))<0) {
+        logger->log(EXTENSION_LOG_WARNING, "Fail to open file : %s\n", newpath);
         return -1;
     }
 
-    (*logfile)->fd = fd;
-    (*logfile)->size = 0;
+    if (dual_write) {
+        (*logfile)->next_fd = fd;
+        (*logfile)->next_size = 0;
+        snprintf((*logfile)->next_path, MAX_FILEPATH_LENGTH, "%s", newpath);
+    } else {
+        (*logfile)->fd = fd;
+        (*logfile)->size = 0;
+        snprintf((*logfile)->path, MAX_FILEPATH_LENGTH, "%s", newpath);
+    }
     return 0;
 }
 
@@ -261,8 +249,7 @@ void cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write)
         disk_close(logfile->fd);
         pthread_mutex_lock(&log_file_gl.file_access_lock);
         log_file_gl.fidx_end+=1;
-        create_new_cmdlog(&logfile, log_file_gl.fidx_end);
-        printf("idx=%d~%d\n", log_file_gl.fidx_bgn, log_file_gl.fidx_end);
+        create_new_cmdlog(&logfile, log_file_gl.fidx_end, false);
     }
 
     /* The log data is appended */
@@ -289,7 +276,7 @@ void cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write)
             pthread_mutex_lock(&log_file_gl.file_access_lock);
 
             log_file_gl.fidx_dw_end += 1;
-            create_new_cmdlog(&logfile, log_file_gl.fidx_dw_end);
+            create_new_cmdlog(&logfile, log_file_gl.fidx_dw_end, true);
         }
 
         /* The log data is appended */
@@ -307,11 +294,6 @@ void cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write)
     pthread_mutex_unlock(&log_file_gl.file_access_lock);
 }
 
-// static void clear_oldfile(logfile_Node **head, logfile_Node **tail)
-// {
-
-// }
-
 void cmdlog_file_complete_dual_write(void)
 {
     log_FILE *logfile = &log_file_gl.log_file;
@@ -323,6 +305,8 @@ void cmdlog_file_complete_dual_write(void)
         logfile->size      = logfile->next_size;
         logfile->next_fd   = -1;
         logfile->next_size = 0;
+        snprintf(logfile->path, MAX_FILEPATH_LENGTH, "%s", logfile->next_path);
+        logfile->next_path[0] = '\0';
 
         log_file_gl.fidx_bgn = log_file_gl.fidx_dw_bgn;
         log_file_gl.fidx_end = log_file_gl.fidx_dw_end;
@@ -331,7 +315,6 @@ void cmdlog_file_complete_dual_write(void)
 
         if (config->async_logging) {
             (void)disk_close(logfile->prev_fd);
-            //clear_oldfile();
             logfile->prev_fd = -1;
         }
     }
@@ -380,7 +363,6 @@ int cmdlog_file_sync(void)
     if (prev_fd != -1) {
         (void)disk_fsync(prev_fd);
         (void)disk_close(prev_fd);
-        //clear_oldfile();
     }
 
     if (LOGSN_IS_GT(&now_flush_lsn, &log_file_gl.nxt_fsync_lsn)) {
@@ -405,10 +387,10 @@ int cmdlog_file_sync(void)
 
             /* update nxt_fsync_lsn */
             pthread_mutex_lock(&log_file_gl.fsync_lsn_lock);
-            logger->log(EXTENSION_LOG_INFO, NULL, "[DEBUG fsync_lsn] filenum=%d roffset=%ld\n",
+            logger->log(EXTENSION_LOG_DEBUG, NULL, "[DEBUG fsync_lsn] filenum=%d roffset=%ld\n",
                             log_file_gl.nxt_fsync_lsn.filenum, log_file_gl.nxt_fsync_lsn.roffset);
             log_file_gl.nxt_fsync_lsn = now_flush_lsn;
-    logger->log(EXTENSION_LOG_INFO, NULL, "[DEBUG fsync_lsn] filenum=%d roffset=%ld\n",
+    logger->log(EXTENSION_LOG_DEBUG, NULL, "[DEBUG fsync_lsn] filenum=%d roffset=%ld\n",
                             log_file_gl.nxt_fsync_lsn.filenum, log_file_gl.nxt_fsync_lsn.roffset);
             pthread_mutex_unlock(&log_file_gl.fsync_lsn_lock);
         } while(0);
@@ -432,16 +414,18 @@ int cmdlog_file_open(char *path)
                         logfile->path, strerror(errno));
             ret = -1; break;
         }
-        snprintf(logfile->path, MAX_FILEPATH_LENGTH, "%s", path);
+
         if (logfile->fd == -1) {
             logfile->fd = fd;
             log_file_gl.fidx_bgn = 1;
             log_file_gl.fidx_end = 1;
+            snprintf(logfile->path, MAX_FILEPATH_LENGTH, "%s", path);
         } else {
             /* fd != -1 means that a new cmdlog file is created by checkpoint */
             logfile->next_fd = fd;
             log_file_gl.fidx_dw_bgn = 1;
             log_file_gl.fidx_dw_end = 1;
+            snprintf(logfile->next_path, MAX_FILEPATH_LENGTH, "%s", path);
         }
     } while(0);
     pthread_mutex_unlock(&log_file_gl.file_access_lock);
@@ -462,6 +446,8 @@ void cmdlog_file_close(void)
     if (logfile->next_fd != -1) {
         remove_fd = logfile->next_fd;
         logfile->next_fd = -1;
+        logfile->next_size = 0;
+        logfile->next_path[0] = '\0';
     } else { /* the first checkpoint */
         assert(logfile->fd != -1);
         remove_fd = logfile->fd;
@@ -492,6 +478,7 @@ void cmdlog_file_init(struct default_engine* engine)
     /* log file init */
     log_FILE *logfile = &log_file_gl.log_file;
     logfile->path[0]   = '\0';
+    logfile->next_path[0] = '\0';
     logfile->prev_fd   = -1;
     logfile->fd        = -1;
     logfile->next_fd   = -1;
@@ -579,10 +566,7 @@ static int do_redo_pending_lrec(int fd, int start_offset, int end_offset)
     return ret;
 }
 
-static bool next_cmdlog_exist(log_FILE **logfile)
-{
-    char *path = (*logfile)->path;
-
+bool next_cmdlog_path(char *path, char *next) {
     char *slash = strrchr(path, '/');
     if (!slash || slash == path) return false;
 
@@ -595,24 +579,30 @@ static bool next_cmdlog_exist(log_FILE **logfile)
 
     int n = atoi(num)+1;
 
-    char next[1024];
     size_t dirlen = (size_t)(slash - path);
 
     memcpy(next, path, dirlen);
     next[dirlen] = '\0';
 
+    snprintf(next+dirlen, MAX_FILEPATH_LENGTH-dirlen, "/cmdlog_%.14s_%06d", time, n);
+    return true;
+}
+
+static bool next_cmdlog_exist(log_FILE **logfile)
+{
+    char *path = (*logfile)->path;
+    char next_path[MAX_FILEPATH_LENGTH];
+    next_cmdlog_path(path, next_path);
 
     int fd;
-    snprintf(next+dirlen, sizeof(next)-dirlen, "/cmdlog_%.14s_%06d", time, n);
-    fd = open(next, O_RDWR);
+    fd = open(next_path, O_RDWR);
     if (fd < 0)
         return false;
 
     close((*logfile)->fd);
     (*logfile)->fd = fd;
 
-    snprintf((*logfile)->path, sizeof((*logfile)->path), "%s", next);
-
+    snprintf((*logfile)->path, sizeof((*logfile)->path), "%s", next_path);
     return true;
 }
 

@@ -57,7 +57,6 @@ typedef struct _chkpt_st {
     char    *logs_path;           /* command log directory path */
     volatile uint8_t running;     /* Is it running, now ? */
     volatile bool    reqstop;     /* stop to do checkpoint */
-    volatile bool    reqrun;      /* start checkpoint */
     volatile bool    initialized; /* checkpoint module init */
 } chkpt_st;
 
@@ -200,7 +199,6 @@ static int do_chkpt_remove_files(chkpt_st *cs, int64_t oldtime)
 
     char target_file[MAX_FILEPATH_LENGTH];
     sprintf(target_file, "%s%"PRId64, CHKPT_CMDLOG_PREFIX, oldtime);
-    printf("%s\n", target_file);
     struct dirent **cmdlog_list;
     int cmdlog_count = scandir(cs->logs_path, &cmdlog_list, cmdlogfilter, alphasort);
 
@@ -209,7 +207,6 @@ static int do_chkpt_remove_files(chkpt_st *cs, int64_t oldtime)
     while (firstidx < cmdlog_count) {
         ent = cmdlog_list[firstidx];
         // cmdlog_ (7), <time> 14
-        printf("%s\n", ent->d_name);
         if (strncmp(target_file, ent->d_name, 21) != 0)
             break;
 
@@ -250,15 +247,10 @@ static int do_chkpt_thread_sleep(chkpt_st *cs, int sleep_sec)
 static void do_chkpt_thread_wakeup(chkpt_st *cs)
 {
     pthread_mutex_lock(&cs->lock);
-    cs->reqrun = true;
     if (cs->sleep) {
         pthread_cond_signal(&cs->cond);
     }
     pthread_mutex_unlock(&cs->lock);
-}
-
-void chkpt_thread_wakeup(void) {
-    do_chkpt_thread_wakeup(&chkpt_anch);
 }
 
 /* FIXME : Error handling(Disk I/O etc) */
@@ -318,7 +310,6 @@ static int do_checkpoint(chkpt_st *cs)
     return ret;
 }
 
-/*
 static bool do_checkpoint_needed(chkpt_st *cs)
 {
     struct engine_config *config = cs->config;
@@ -333,7 +324,51 @@ static bool do_checkpoint_needed(chkpt_st *cs)
     }
     return true;
 }
-*/
+
+int do_chkpt_snapshot() {
+    chkpt_st *cs = &chkpt_anch;
+    struct engine_config *config = cs->config;
+    bool need_remove = false;
+    int ret = CHKPT_SUCCESS;
+
+    while (1) {
+        do_chkpt_thread_sleep(cs, 1);
+
+        if (need_remove) {
+            need_remove = !do_chkpt_sweep_files(cs);
+        }
+
+        if (cs->prevtime != -1) {
+            if (!config->async_logging)
+                cmdlog_file_sync();
+
+            if (cmdlog_file_dual_write_finished()) {
+                /* remove previous checkpoint files. */
+                if (do_chkpt_remove_files(cs, cs->prevtime) < 0) {
+                    need_remove = true;
+                }
+                else {
+                    cs->prevtime = -1;
+                    break;
+                }
+                cs->prevtime = -1;
+            }
+        }
+
+        if (cs->prevtime == -1) {
+            ret = do_checkpoint(cs);
+            if (ret != CHKPT_SUCCESS) {
+                logger->log(EXTENSION_LOG_WARNING, NULL, "Failed in checkpoint. "
+                            "Retry checkpoint in 5 seconds.\n");
+                if (ret == CHKPT_ERROR_FILE_REMOVE) need_remove = true;
+            }
+            else {
+                logger->log(EXTENSION_LOG_WARNING, NULL, "Complete checkpoint.\n");
+            }
+        }
+    }
+    return ret;
+}
 
 static void* chkpt_thread_main(void* arg)
 {
@@ -344,13 +379,8 @@ static void* chkpt_thread_main(void* arg)
     int ret = CHKPT_SUCCESS;
 
     cs->running = RUNNING_STARTED;
-    while (1) {
+    while (0) {
         elapsed_time += do_chkpt_thread_sleep(cs, 1);
-
-        pthread_mutex_lock(&cs->lock);
-        bool do_run = cs->reqrun;
-        cs->reqrun = false;
-        pthread_mutex_unlock(&cs->lock);
 
         if (cs->reqstop) {
             logger->log(EXTENSION_LOG_INFO, NULL, "Checkpoint thread recognized stop request.\n");
@@ -365,20 +395,18 @@ static void* chkpt_thread_main(void* arg)
             }
         }
 
-        /* check previous checkpoint is completed. */
-        if (cs->prevtime != -1) {
-            if (cmdlog_file_dual_write_finished()) {
-                /* remove previous checkpoint files. */
-                if (do_chkpt_remove_files(cs, cs->prevtime) < 0) {
-                    need_remove = true;
+        if (elapsed_time >= CHKPT_CHECK_INTERVAL) {
+            /* check previous checkpoint is completed. */
+            if (cs->prevtime != -1) {
+                if (cmdlog_file_dual_write_finished()) {
+                    /* remove previous checkpoint files. */
+                    if (do_chkpt_remove_files(cs, cs->prevtime) < 0) {
+                        need_remove = true;
+                    }
+                    cs->prevtime = -1;
                 }
-
-                cs->prevtime = -1;
             }
-        }
-
-        if (do_run) {
-            if (cs->prevtime == -1) {
+            if (cs->prevtime == -1 && do_checkpoint_needed(cs)) {
                 ret = do_checkpoint(cs);
                 if (ret != CHKPT_SUCCESS) {
                     logger->log(EXTENSION_LOG_WARNING, NULL, "Failed in checkpoint. "
