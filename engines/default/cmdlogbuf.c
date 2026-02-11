@@ -208,7 +208,6 @@ static LogSN do_log_buff_write(LogRec *logrec, bool dual_write)
                  * to make to-be-flushed log data contiguous in memory.
                  */
                 if (logbuff->fque[logbuff->fend].nflush > 0) {
-                    logger->log(EXTENSION_LOG_INFO, NULL, "FLUSH!\n");
                     if ((++logbuff->fend) == logbuff->fqsz) logbuff->fend = 0;
                 }
                 if (total_length < logbuff->head) {
@@ -256,7 +255,6 @@ static LogSN do_log_buff_write(LogRec *logrec, bool dual_write)
         }
 
         logbuff->fque[logbuff->fend].nflush += spare_length;
-        logger->log(EXTENSION_LOG_INFO, NULL, "[DEBUG] nflush = %d\n", logbuff->fque[logbuff->fend].nflush);
         logbuff->fque[logbuff->fend].dual_write = dual_write;
         if (logbuff->fque[logbuff->fend].nflush == CMDLOG_FLUSH_AUTO_SIZE) {
             if ((++logbuff->fend) == logbuff->fqsz) logbuff->fend = 0;

@@ -496,7 +496,6 @@ static ENGINE_ERROR_CODE do_snapshot_start(snapshot_st *ss,
     do_snapshot_prepare(ss, mode, prefix, nprefix, filepath, callback);
 
     /* start the snapshot thread */
-    //ss->running = true;
 
     if (pthread_attr_init(&attr) != 0 ||
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) != 0 ||

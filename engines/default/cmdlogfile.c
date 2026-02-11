@@ -30,6 +30,7 @@
 #include "cmdlogbuf.h"
 
 #define ENABLE_DEBUG 0
+#define MAX_FILE_SIZE (4 * 1024) //1024*1024*1024 // 1GB /* unit : byte */
 
 /* log file structure */
 typedef struct _log_file {
@@ -64,10 +65,21 @@ static struct log_file_global log_file_gl;
 bool cmdlog_file_deletable() {
     bool ret;
     pthread_mutex_lock(&log_file_gl.file_access_lock);
-    ret = log_buff_gl.fidx_bgn < log_file_gl.fidx_end;
+    ret = (log_file_gl.fidx_bgn < log_file_gl.fidx_end);
     pthread_mutex_unlock(&log_file_gl.file_access_lock);
     return ret;
 }
+
+// void cmdlog_file_delete(const char* path) {
+
+//     if (unlink(path) < 0) {
+
+//     }
+
+//     pthread_mutex_lock(&log_file_gl.file_access_lock);
+//     log_file_gl.fidx_bgn += 1;
+//     pthread_mutex_unlock(&log_file_gl.file_access_lock);
+// }
 
 static int create_new_cmdlog(log_FILE **logfile, int next_fidx, bool dual_write) {
     int fd;
@@ -194,6 +206,7 @@ static size_t cmdlog_file_fit(log_FILE *logfile, char **log_ptr, uint32_t log_si
         LogHdr *loghdr = &logrec->header;
         size_t log_len = sizeof(LogHdr)+loghdr->body_length;
 
+        printf("cmdlog_file_fit=%ld\n", log_len);
         if (logfile->size+bytes_to_write+log_len > MAX_FILE_SIZE)
             break;
 
@@ -383,6 +396,7 @@ int cmdlog_file_sync(void)
             pthread_mutex_unlock(&log_file_gl.fsync_lsn_lock);
         } while(0);
     }
+    printf("after sync prev_fd=%d next_fd=%d\n", logfile->prev_fd, logfile->next_fd);
     pthread_mutex_unlock(&log_file_gl.log_fsync_lock);
 
     return ret;
@@ -518,7 +532,7 @@ static int do_redo_pending_lrec(int fd, int start_offset, int end_offset)
 
     int ret = 0;
     ssize_t nread = 0;
-    int redo_offset = lseek(fd, (start_offset - end_offset), SEEK_CUR);
+    int redo_offset = lseek(fd, start_offset, SEEK_SET);
     while (redo_offset < end_offset) {
         nread = disk_read(fd, loghdr, sizeof(LogHdr));
         if (nread != sizeof(LogHdr)) {
@@ -553,10 +567,38 @@ static int do_redo_pending_lrec(int fd, int start_offset, int end_offset)
     return ret;
 }
 
-static bool next_cmdlog_exist(log_FILE **logfile)
+static int do_redo_pending_rolled_lrec(int start_offset, int end_offset, char *start_path, char *end_path)
 {
-    char *path = (*logfile)->path;
+    int fd = open(start_path, O_RDONLY);
+    struct stat file_stat;
+    fstat(fd, &file_stat);
+    size_t file_size = file_stat.st_size;
 
+    while(strncmp(start_path, end_path, MAX_FILEPATH_LENGTH) != 0) {
+        if (do_redo_pending_lrec(fd, start_offset, file_size))
+            return -1;
+
+        close(fd);
+        char path[MAX_FILEPATH_LENGTH];
+        next_cmdlog_path(start_path, path);
+        fd = open(path, O_RDONLY);
+        if (fd < 0) {
+            break;
+        }
+        snprintf(start_path, MAX_FILEPATH_LENGTH, "%s", path);
+        fstat(fd, &file_stat);
+        file_size = file_stat.st_size;
+        start_offset = 0;
+    }
+
+    if (do_redo_pending_lrec(fd, start_offset, end_offset))
+        return -1;
+    close(fd);
+
+    return 0;
+}
+
+bool next_cmdlog_path(char *path, char *next) {
     char *slash = strrchr(path, '/');
     if (!slash || slash == path) return false;
 
@@ -569,24 +611,30 @@ static bool next_cmdlog_exist(log_FILE **logfile)
 
     int n = atoi(num)+1;
 
-    char next[1024];
     size_t dirlen = (size_t)(slash - path);
 
     memcpy(next, path, dirlen);
     next[dirlen] = '\0';
 
+    snprintf(next+dirlen, MAX_FILEPATH_LENGTH-dirlen, "/cmdlog_%.14s_%06d", time, n);
+    return true;
+}
+
+static bool next_cmdlog_exist(log_FILE **logfile)
+{
+    char *path = (*logfile)->path;
+    char next_path[MAX_FILEPATH_LENGTH];
+    next_cmdlog_path(path, next_path);
 
     int fd;
-    snprintf(next+dirlen, sizeof(next)-dirlen, "/cmdlog_%.14s_%06d", time, n);
-    fd = open(next, O_RDWR);
+    fd = open(next_path, O_RDWR);
     if (fd < 0)
         return false;
 
     close((*logfile)->fd);
     (*logfile)->fd = fd;
 
-    snprintf((*logfile)->path, sizeof((*logfile)->path), "%s", next);
-
+    snprintf((*logfile)->path, sizeof((*logfile)->path), "%s", next_path);
     return true;
 }
 
@@ -610,6 +658,7 @@ int cmdlog_file_apply(void)
     int  ret = 0;
     int  seek_offset = 0;
     int  pending_start_offset = 0;
+    char pending_start_path[MAX_FILEPATH_LENGTH];
     int  pending_end_offset = 0;
     bool pending = false;
     char buf[MAX_LOG_RECORD_SIZE];
@@ -653,6 +702,7 @@ int cmdlog_file_apply(void)
                 ret = -1; break;
             }
             pending_start_offset = seek_offset;
+            snprintf(pending_start_path, MAX_FILEPATH_LENGTH, "%s", logfile->path);
             pending = true;
             continue;
         }
@@ -666,10 +716,19 @@ int cmdlog_file_apply(void)
             }
             /* redo pending normal log records */
             pending_end_offset = seek_offset;
-            if (do_redo_pending_lrec(logfile->fd, pending_start_offset, pending_end_offset) < 0) {
-                logger->log(EXTENSION_LOG_WARNING, NULL,
-                            "[RECOVERY - CMDLOG] failed : pending log record redo failed\n");
-                ret = -1; break;
+            if (strncmp(pending_start_path, logfile->path, MAX_FILEPATH_LENGTH) == 0) {
+                if (do_redo_pending_lrec(logfile->fd, pending_start_offset, pending_end_offset) < 0) {
+                    logger->log(EXTENSION_LOG_WARNING, NULL,
+                                "[RECOVERY - CMDLOG] failed : pending log record redo failed\n");
+                    ret = -1; break;
+                }
+            } else {
+                if (do_redo_pending_rolled_lrec(pending_start_offset, pending_end_offset,
+                                                pending_start_path, logfile->path) < 0) {
+                    logger->log(EXTENSION_LOG_WARNING, NULL,
+                                "[RECOVERY - CMDLOG] failed : pending log record redo failed\n");
+                    ret = -1; break;
+                }
             }
 
             /* Complete redo of pending log records. cleanup pending info */
