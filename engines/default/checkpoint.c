@@ -276,7 +276,6 @@ static int do_checkpoint(chkpt_st *cs)
             ret = CHKPT_SUCCESS;
             cs->prevtime = cs->lasttime;
             cs->lasttime = newtime;
-            printf("prevtime=%ld lasttime=%ld\n", cs->prevtime, newtime);
 
             logger->log(EXTENSION_LOG_INFO, NULL, "Checkpoint has been done.\n");
             /* We will remove the previous checkpoint files
@@ -322,7 +321,7 @@ static bool do_checkpoint_needed(chkpt_st *cs)
     return true;
 }
 
-int do_chkpt_snapshot() {
+int chkpt_snapshot() {
     chkpt_st *cs = &chkpt_anch;
     struct engine_config *config = cs->config;
     bool need_remove = false;

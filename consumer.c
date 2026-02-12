@@ -69,25 +69,25 @@ void consumer_init(int argc, char **argv) {
 
     conf = rd_kafka_conf_new();
 
-    if(rd_kafka_conf_set(conf, "bootstrap.servers", kafka_anch.brokers, errstr,
+    if (rd_kafka_conf_set(conf, "bootstrap.servers", kafka_anch.brokers, errstr,
                             sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         rd_kafka_conf_destroy(conf);
         return;
     }
 
-    if(rd_kafka_conf_set(conf, "group.id", argv[2], errstr,
+    if (rd_kafka_conf_set(conf, "group.id", argv[2], errstr,
                             sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         rd_kafka_conf_destroy(conf);
         return;
     }
 
-    if(rd_kafka_conf_set(conf, "group.protocol", argv[3], errstr,
+    if (rd_kafka_conf_set(conf, "group.protocol", argv[3], errstr,
                             sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         rd_kafka_conf_destroy(conf);
         return;
     }
 
-    if(rd_kafka_conf_set(conf, "auto.offset.reset", "earliest", errstr,
+    if (rd_kafka_conf_set(conf, "auto.offset.reset", "earliest", errstr,
                             sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         rd_kafka_conf_destroy(conf);
         return;
@@ -183,7 +183,7 @@ static int lrec_to_it_unlink(memcached_st *mc, LogRec *logrec)
     return 0;
 }
 
-static int lrec_to_it_list_elem_insert(memcached_st *mc, LogRec *logrec)
+static int lrec_to_list_elem_insert(memcached_st *mc, LogRec *logrec)
 {
     memcached_return_t rc;
     memcached_coll_attrs_st attrs;
@@ -210,7 +210,6 @@ static int lrec_to_it_list_elem_insert(memcached_st *mc, LogRec *logrec)
                 rc, memcached_strerror(mc, rc));
             return -1;
         }
-        rc = memcached_get_attrs(mc, keyptr, body->keylen, &attrs);
     }
 
     if (rc == MEMCACHED_SUCCESS) {
@@ -223,13 +222,14 @@ static int lrec_to_it_list_elem_insert(memcached_st *mc, LogRec *logrec)
         }
         assert(rc == MEMCACHED_SUCCESS);
     } else {
-        fprintf(stderr, "attrs NULL\n");
+        fprintf(stderr, "Failed to memcached_lop_insert: %d(%s)\n",
+                rc, memcached_strerror(mc, rc));
         return -1;
     }
     return 0;
 }
 
-static int lrec_to_it_list_elem_delete(memcached_st *mc, LogRec *logrec)
+static int lrec_to_list_elem_delete(memcached_st *mc, LogRec *logrec)
 {
     memcached_return_t rc;
     ListElemDelLog *log = (ListElemDelLog*)logrec;
@@ -251,19 +251,59 @@ static int lrec_to_it_list_elem_delete(memcached_st *mc, LogRec *logrec)
     }
 }
 
-bool lrec_to_ascii_command(memcached_st *mc, LogRec *logrec)
+static int lrec_to_ascii_command(memcached_st *mc, LogRec *logrec)
 {
-    bool ret = false;
+    int ret = -1;
     LogHdr *loghdr = &logrec->header;
 
     if (loghdr->logtype == LOG_IT_LINK) {
-        lrec_to_it_link(mc, logrec);
+        ret = lrec_to_it_link(mc, logrec);
     } else if (loghdr->logtype == LOG_IT_UNLINK) {
-        lrec_to_it_unlink(mc, logrec);
+        ret = lrec_to_it_unlink(mc, logrec);
     } else if (loghdr->logtype == LOG_LIST_ELEM_INSERT) {
-        lrec_to_it_list_elem_insert(mc, logrec);
+        ret = lrec_to_list_elem_insert(mc, logrec);
     } else if (loghdr->logtype == LOG_LIST_ELEM_DELETE) {
-        lrec_to_it_list_elem_delete(mc, logrec);
+        ret = lrec_to_list_elem_delete(mc, logrec);
+    }
+    return ret;
+}
+
+static int snapshot_elem_to_ascii(memcached_st *mc, snapshot_ctx *ctx, LogRec *logrec)
+{
+    memcached_return_t rc;
+    memcached_coll_attrs_st attrs;
+    SnapshotElemLog *log = (SnapshotElemLog*)logrec;
+    SnapshotElemData *body = &log->body;
+    char *valptr = body->data;
+    int index;
+    if (ctx->ittype == ITEM_TYPE_LIST) {
+        rc = memcached_get_attrs(mc, ctx->keybuf, ctx->keylen, &attrs);
+        index = attrs.count;
+        rc = memcached_lop_insert(mc, ctx->keybuf, ctx->keylen, index, valptr, body->nbytes-2, NULL);
+    }
+}
+
+static void update_snapshot_ctx(snapshot_ctx *ctx, LogRec *logrec)
+{
+    ITLinkLog *log = (ITLinkLog*)logrec;
+    const ITLinkData *body = &log->body;
+    const struct lrec_item_common *cm = (const struct lrec_item_common *)&body->cm;
+    const char *keyptr = body->data;
+
+    if (cm->ittype == ITEM_TYPE_BTREE) {
+        const struct lrec_coll_meta *meta = (const struct lrec_coll_meta *)&body->ptr.meta;
+        if (meta->maxbkrlen != BKEY_NULL) {
+            keyptr += BTREE_REAL_NBKEY(meta->maxbkrlen);
+        }
+    }
+
+    if (cm->ittype != ITEM_TYPE_KV) {
+        ctx->keylen = cm->keylen;
+        ctx->ittype = cm->ittype;
+        if (cm->keylen > 0 && cm->keylen < sizeof(ctx->keybuf)) {
+            memcpy(ctx->keybuf, keyptr, cm->keylen);
+            ctx->keybuf[cm->keylen] = '\0';
+        }
     }
 }
 
@@ -298,29 +338,23 @@ static int do_consum(memcached_st *mc) {
             continue;
         }
 
-        char cmd_buf[4096];
-        size_t cmd_len = 0;
-        bool ok = false;
-
+        int ret = -1;
         if (loghdr->logtype == LOG_IT_LINK) {
-            ok = lrec_to_ascii_command(mc, logrec);
+            update_snapshot_ctx(&ctx, logrec);
+            ret = lrec_to_ascii_command(mc, logrec);
         } else if (loghdr->logtype == LOG_SNAPSHOT_ELEM) {
-            //ok = snapshot_elem_to_ascii((const SnapshotElemLog *)logrec, &ctx, cmd_buf, sizeof(cmd_buf), &cmd_len);
+            ret = snapshot_elem_to_ascii(mc, &ctx, logrec);
         } else {
-            ok = lrec_to_ascii_command(mc, logrec);
+            ret = lrec_to_ascii_command(mc, logrec);
         }
 
-        if (1) {
+        if (ret == 0) {
             rd_kafka_resp_err_t err = rd_kafka_commit_message(ks->rk, rkm, 0);
             if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
-                // 커밋 실패 정책 필요
+                fprintf(stderr, "Kafka commit failed: %s\n", rd_kafka_err2str(err));
             }
-        }
-
-        if (ok && cmd_len > 0) {
-            /* 전송 */
-            cmd_buf[cmd_len] = '\0';
-            printf("%s", cmd_buf);
+        } else {
+            fprintf(stderr, "Skip commit (conversion/write failure).\n");
         }
 
         rd_kafka_message_destroy(rkm);
@@ -342,6 +376,8 @@ int main(int argc, char **argv)
 
     do_consum(mc);
 
+    rd_kafka_consumer_close(kafka_anch.rk);
+    rd_kafka_destroy(kafka_anch.rk);
     memcached_free(mc);
     return 0;
 }

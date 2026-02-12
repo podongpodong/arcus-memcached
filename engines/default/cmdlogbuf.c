@@ -160,11 +160,7 @@ static uint32_t do_log_buff_flush(bool flush_all)
 
         /* update nxt_flush_lsn */
         pthread_mutex_lock(&log_buff_gl.flush_lsn_lock);
-        logger->log(EXTENSION_LOG_DEBUG, NULL, "[DEBUG flush_lsn] filenum=%d roffset=%ld\n",
-                            log_buff_gl.nxt_flush_lsn.filenum, log_buff_gl.nxt_flush_lsn.roffset);
         log_buff_gl.nxt_flush_lsn.roffset += nflush;
-        logger->log(EXTENSION_LOG_DEBUG, NULL, "[DEBUG flush_lsn] filenum=%d roffset=%ld\n",
-                            log_buff_gl.nxt_flush_lsn.filenum, log_buff_gl.nxt_flush_lsn.roffset);
         pthread_mutex_unlock(&log_buff_gl.flush_lsn_lock);
 
         /* update next flush position */
@@ -236,7 +232,6 @@ static LogSN do_log_buff_write(LogRec *logrec, bool dual_write)
     }
 
     /* update nxt_write_lsn */
-
     current_lsn = log_buff_gl.nxt_write_lsn;
     log_buff_gl.nxt_write_lsn.roffset += total_length;
 
@@ -270,11 +265,6 @@ static LogSN do_log_buff_write(LogRec *logrec, bool dual_write)
             do_log_flusher_wakeup(&log_buff_gl.log_flusher);
         }
     }
-
-    logger->log(EXTENSION_LOG_INFO, NULL, "[DEBUG write_lsn] filenum=%d roffset=%ld\n",
-                            current_lsn.filenum, current_lsn.roffset);
-    logger->log(EXTENSION_LOG_INFO, NULL, "[DEBUG write_lsn] filenum=%d roffset=%ld\n",
-                            log_buff_gl.nxt_write_lsn.filenum, log_buff_gl.nxt_write_lsn.roffset);
     return current_lsn;
 }
 

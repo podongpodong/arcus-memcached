@@ -21,10 +21,10 @@
 #include "cmdlogrec.h"
 
 #ifdef ENABLE_PERSISTENCE
-
 /* external log file functions */
 bool next_cmdlog_path(char *path, char *next_path);
 bool cmdlog_file_deletable(void);
+void cmdlog_file_delete(const char *path);
 void cmdlog_file_write(char *log_ptr, uint32_t log_size, bool dual_write);
 void cmdlog_file_complete_dual_write(void);
 bool cmdlog_file_dual_write_finished(void);

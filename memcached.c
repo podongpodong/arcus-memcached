@@ -10012,26 +10012,36 @@ static void process_dump_command(conn *c, token_t *tokens, const size_t ntokens)
      * dump stop\r\n
      */
     if (memcmp(subcommand, "start", 5) == 0) {
-        CHECK_NTOKENS(ntokens, 4, 6);
-
         modestr = tokens[2].value;
-        if (ntokens == 5) {
-            filepath = tokens[3].value;
-        } else if (ntokens == 4 && (strncmp(tokens[2].value, "snapshot", 8) == 0)) {
+        if (memcmp(modestr, "key", 3) == 0) {
+            CHECK_NTOKENS(ntokens, 5, 6);
+
+            if (ntokens == 5) {
+                filepath = tokens[3].value;
+            }
+            else {
+                prefix = tokens[3].value;
+                nprefix = tokens[3].length;
+                if (nprefix > PREFIX_MAX_LENGTH) {
+                    out_string(c, "CLIENT_ERROR too long prefix name");
+                    return;
+                }
+                if (nprefix == 6 && strncmp(prefix, "<null>", 6) == 0) {
+                    /* dump null prefix */
+                    prefix = NULL;
+                    nprefix = 0;
+                }
+                filepath = tokens[4].value;
+            }
+        }
+        else if (memcmp(modestr, "snapshot", 8) == 0) {
+            CHECK_NTOKENS_EQ(ntokens, 4);
             filepath = NULL;
-        } else if (ntokens == 6) {
-            prefix = tokens[3].value;
-            nprefix = tokens[3].length;
-            if (nprefix > PREFIX_MAX_LENGTH) {
-                out_string(c, "CLIENT_ERROR too long prefix name");
-                return;
-            }
-            if (nprefix == 6 && strncmp(prefix, "<null>", 6) == 0) {
-                /* dump null prefix */
-                prefix = NULL;
-                nprefix = 0;
-            }
-            filepath = tokens[4].value;
+        }
+        else {
+            print_invalid_command(c, tokens, ntokens);
+            out_string(c, "ERROR unknown command");
+            return;
         }
     }
     else if (memcmp(subcommand, "stop", 4) == 0) {

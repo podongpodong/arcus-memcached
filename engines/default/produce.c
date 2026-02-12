@@ -179,6 +179,7 @@ static int produce_cmdlog(ms_producer *p, int *cmdlog_offset)
                     *cmdlog_offset = seek_offset;
                     return -1;
                 }
+                cmdlog_file_delete(p->cmdlog_path);
                 snprintf(p->cmdlog_path, MAX_FILEPATH_LENGTH, "%s", path);
 
                 fstat(fd, &sb);

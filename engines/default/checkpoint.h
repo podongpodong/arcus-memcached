@@ -28,7 +28,7 @@ int chkpt_recovery_redo(void);
 ENGINE_ERROR_CODE chkpt_init(struct default_engine* engine);
 ENGINE_ERROR_CODE chkpt_thread_start(void);
 
-int do_chkpt_snapshot(void);
+int chkpt_snapshot(void);
 void chkpt_thread_stop(void);
 void chkpt_final(void);
 
