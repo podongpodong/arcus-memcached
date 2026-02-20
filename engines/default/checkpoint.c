@@ -309,7 +309,7 @@ static void* chkpt_thread_main(void* arg)
     int ret = CHKPT_SUCCESS;
 
     cs->running = RUNNING_STARTED;
-    while (1) {
+    while (0) {
         elapsed_time += do_chkpt_thread_sleep(cs, 1);
 
         if (cs->reqstop) {
