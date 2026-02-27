@@ -147,7 +147,7 @@ static uint32_t do_log_buff_flush(bool flush_all)
     pthread_mutex_unlock(&log_buff_gl.log_write_lock);
 
     if (dual_write_complete_flag) {
-        cmdlog_file_complete_dual_write();
+        //cmdlog_file_complete_dual_write();
         cdclog_file_complete_dual_write();
         //assert(dual_write_size == cmdlog_file_getsize());
 
@@ -159,7 +159,7 @@ static uint32_t do_log_buff_flush(bool flush_all)
 
     if (nflush > 0) {
         // Persistence
-        cmdlog_file_write(&logbuff->data[logbuff->head], nflush, dual_write_flag);
+        //cmdlog_file_write(&logbuff->data[logbuff->head], nflush, dual_write_flag);
         // CDC
         cdclog_file_write(&logbuff->data[logbuff->head], nflush, dual_write_flag);
 

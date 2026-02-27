@@ -20,7 +20,6 @@
 #include "engines/default/cmdlogrec.h"
 
 #define BTREE_REAL_NBKEY(nbkey) ((nbkey)==0 ? sizeof(uint64_t) : (nbkey))
-#define EXPIRED_REL_EXPTIME(exptime) ((exptime) == 1)
 
 typedef struct _kafka_st {
     rd_kafka_t *rk;
@@ -37,7 +36,7 @@ typedef struct snapshot_ctx {
 /* global data */
 static kafka_st kafka_anch;
 
-static int CONVERT_REL_EXPTIME(rel_time_t exptime)
+static int EXPIRED_REL_EXPTIME(rel_time_t exptime)
 {
     if (exptime == 0 || exptime == (rel_time_t)(-1)) {
         return exptime; /* 0 (never), -1 (sticky) */
@@ -127,10 +126,10 @@ static int lrec_to_it_link(memcached_st *mc, LogRec *logrec)
     struct lrec_item_common *cm = &body->cm;
     char *keyptr = body->data;
 
-    if (CONVERT_REL_EXPTIME(cm->exptime) == 1) {
-       fprintf(stderr, "expried tiem. key=%.*s\n", cm->keylen, keyptr);
-       return 0;
-    }
+    // if (EXPIRED_REL_EXPTIME(cm->exptime) == 1) {
+    //    fprintf(stderr, "expried tiem. key=%.*s\n", cm->keylen, keyptr);
+    //    return 0;
+    // }
 
     if (cm->ittype == ITEM_TYPE_KV) {
         char *valptr = keyptr + cm->keylen;
@@ -142,7 +141,6 @@ static int lrec_to_it_link(memcached_st *mc, LogRec *logrec)
                     rc, memcached_strerror(mc, rc));
             return -1;
         }
-        // fprintf(stderr, "KV key=%.*s\n", cm->keylen, keyptr);
     } else {
         struct lrec_coll_meta *meta = (struct lrec_coll_meta*)&body->ptr.meta;
         memcached_coll_create_attrs_st attributes;
@@ -389,7 +387,7 @@ static int do_consum(memcached_st *mc) {
             tp->offset = next_offset;
 
             success_since_commit++;
-            if (success_since_commit >= 200) {
+            if (success_since_commit >= 500) {
                 commit_pending(ks->rk, &pending);
                 success_since_commit = 0;
             }

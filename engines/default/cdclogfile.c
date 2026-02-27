@@ -8,9 +8,9 @@
 
 #include "default_engine.h"
 
-#ifdef ENABLE_PERSISTENCE
+#define ENABLE_CDC 1
+#ifdef ENABLE_CDC
 #include "cmdlogbuf.h"
-#include "cmdlogfile.h"
 #include "cdclogfile.h"
 #include "disk.h"
 

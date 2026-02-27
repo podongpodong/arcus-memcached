@@ -76,6 +76,9 @@ static int producer_init(void)
         return -1;
     }
 
+    rd_kafka_conf_set(conf, "linger.ms", "20", errstr, sizeof(errstr)); // 배치 대기
+    rd_kafka_conf_set(conf, "batch.num.messages", "100000", errstr, sizeof(errstr)); // 배치 크기
+    rd_kafka_conf_set(conf, "compression.type", "lz4", errstr, sizeof(errstr)); // 압축
     // callback이 필요한지 검토 후 활성화
     //rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
 
@@ -89,7 +92,7 @@ static int producer_init(void)
     return 1;
 }
 
-static int do_produce(char *buf, size_t size)
+static int do_produce(char *buf, size_t size, char *keyptr, uint16_t keylen)
 {
     kafka_st *ks = &kafka_anch;
     while(1) {
@@ -98,6 +101,7 @@ static int do_produce(char *buf, size_t size)
                     ks->rk,
                     RD_KAFKA_V_TOPIC(ks->topic),
                     RD_KAFKA_V_MSGFLAGS(RD_KAFKA_MSG_F_COPY),
+                    RD_KAFKA_V_KEY(keyptr, keylen),
                     RD_KAFKA_V_VALUE(buf, size),
                     RD_KAFKA_V_OPAQUE(NULL),
                     RD_KAFKA_V_END);
@@ -162,6 +166,7 @@ static int produce_cmdlog(ms_producer *p, int *cmdlog_offset)
     ssize_t nread;
     LogRec *logrec = (LogRec*)buf;
     LogHdr *loghdr = &logrec->header;
+    char *keyptr;
 
     while (1) {
         if (p->snapshot_req) {
@@ -202,6 +207,10 @@ static int produce_cmdlog(ms_producer *p, int *cmdlog_offset)
         }
 
         size_t log_size = sizeof(LogHdr)+loghdr->body_length;
+        ITLinkLog  *log  = (ITLinkLog*)logrec;
+        ITLinkData *body = &log->body;
+        struct lrec_item_common cm = body->cm;
+        keyptr = body->data;
         if (loghdr->body_length > 0) {
             logrec->body = buf+sizeof(LogHdr);
             nread = read(fd, logrec->body, loghdr->body_length);
@@ -213,7 +222,7 @@ static int produce_cmdlog(ms_producer *p, int *cmdlog_offset)
             }
         }
 
-        if (do_produce(buf, log_size) < 0) {
+        if (do_produce(buf, log_size, keyptr, cm.keylen) < 0) {
             break;
         }
         seek_offset += log_size;
@@ -245,6 +254,7 @@ static int produce_snapshot(ms_producer *p)
     ssize_t nread;
     LogRec *logrec = (LogRec*)buf;
     LogHdr *loghdr = &logrec->header;
+    char *keyptr;
 
     while (seek_offset < file_size) {
         nread = read(fd, loghdr, sizeof(LogHdr));
@@ -256,6 +266,10 @@ static int produce_snapshot(ms_producer *p)
         }
 
         size_t log_size = sizeof(LogHdr)+loghdr->body_length;
+        ITLinkLog  *log  = (ITLinkLog*)logrec;
+        ITLinkData *body = &log->body;
+        struct lrec_item_common cm = body->cm;
+        keyptr = body->data;
         if (loghdr->body_length > 0) {
             logrec->body = buf+sizeof(LogHdr);
             nread = read(fd, logrec->body, loghdr->body_length);
@@ -267,7 +281,7 @@ static int produce_snapshot(ms_producer *p)
             }
         }
 
-        if (do_produce(buf, log_size) < 0) {
+        if (do_produce(buf, log_size, keyptr, cm.keylen) < 0) {
             break;
         }
         seek_offset += log_size;
